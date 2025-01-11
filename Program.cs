@@ -1,4 +1,17 @@
+using BTL.Models;
+using BTL.Request;
+using MongoDB.Driver;
+
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddSingleton<IMongoClient>(sp =>
+{
+    var connectionString = builder.Configuration["AdsMongoDbContext:ConnectionString"];
+    return new MongoClient(connectionString);
+});
+
+builder.Services.AddSingleton<AdsMongoDbContext>();
+builder.Services.Configure<JwtSettings>(builder.Configuration.GetSection("JwtSettings"));
 
 // Add services to the container.
 
