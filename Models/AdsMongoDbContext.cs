@@ -11,5 +11,8 @@ namespace BTL.Models
         }
 
         public DbSetObjectId<User> users { get; set; }
+        public DbSetObjectId<Class> classes { get; set; }
+        public DbSetObjectId<Student> students { get; set; }
+
     }
 }

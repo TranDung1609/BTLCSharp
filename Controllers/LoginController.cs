@@ -25,7 +25,6 @@ namespace BTL.Controllers
         [HttpPost]
         public async Task<IActionResult> Login([FromBody] LoginUserRequest request)
         {
-           
             var user = _dbContext.users
                 .Where(u => u.Username == request.Username && u.Password == request.Password)
                 .FirstOrDefault();
@@ -62,4 +61,4 @@ namespace BTL.Controllers
             return new JwtSecurityTokenHandler().WriteToken(token);
         }
     }
-}
+}  
