@@ -5,6 +5,9 @@ namespace BTL.Models
 {
     public class Student : AbstractEntityObjectIdTracking
     {
+        [BsonElement("studentId")]
+        public Guid StudentId { get; set; }
+
         [BsonElement("firstName")]
         public string FirstName { get; set; }
 
@@ -12,7 +15,7 @@ namespace BTL.Models
         public string LastName { get; set; }
 
         [BsonElement("classId")]
-        public string ClassId { get; set; }
+        public Guid ClassId { get; set; }
 
         [BsonElement("gender")]
         public short Gender { get; set; } = 1;

@@ -2,10 +2,14 @@
 using BTL.Models;
 using BTL.Request;
 using Microsoft.AspNetCore.Mvc;
-using Microsoft.EntityFrameworkCore;
+using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 using MongoDB.Bson;
 using System.Globalization;
+using System.Net.WebSockets;
 using System.Text.RegularExpressions;
+using static System.Runtime.InteropServices.JavaScript.JSType;
+using Microsoft.IdentityModel.Tokens;
 
 namespace BTL.Controllers
 {
@@ -66,20 +70,15 @@ namespace BTL.Controllers
                 }
             }
 
-            if (!ObjectId.TryParse(request.ClassId, out var objectId))
-            {
-                return BadRequest(new { code = 0, message = "Mã lớp học không đúng định dạng" });
-            }
-
             try
             {
-                var existingClass = _dbContext.classes.Where(c => c.Id == objectId).FirstOrDefault();
+                var existingClass = await _dbContext.classes.Where(c => c.CLassId == request.ClassId).FirstOrDefaultAsync();
                 if (existingClass == null)
                 {
                     return BadRequest(new { code = 0, message = "Thông tin lớp học không chính xác" });
                 }
 
-                string avatarPath = null;
+                string avatarPath = "";
                 if (avatar != null)
                 {
                     string uploadDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
@@ -104,21 +103,24 @@ namespace BTL.Controllers
                         await avatar.CopyToAsync(stream);
                     }
                 }
-                var gender = request.Gender ?? 1;
 
+                var studentId = Guid.NewGuid();
                 var student = new Student
                 {
+                    StudentId = studentId,
                     FirstName = request.FirstName,
                     LastName = request.LastName,
                     ClassId = request.ClassId,
-                    Gender = gender,
-                    DayOfBirth = request.DayOfBirth,
+                    Gender = request.Gender ?? 1,
+                    DayOfBirth = request.DayOfBirth ?? "",
                     Avatar = avatarPath
                 };
 
                 await _dbContext.students.Insert(student);
 
-                return Ok(new { code = 1, message = "Tạo học sinh thành công", data = student });
+                var dataStudent = await _dbContext.students.Where(a => a.StudentId == studentId).FirstOrDefaultAsync();
+
+                return Ok(new { code = 1, message = "Tạo học sinh thành công", data = dataStudent });
             }
             catch (Exception ex)
             {
@@ -127,7 +129,7 @@ namespace BTL.Controllers
         }
 
         [HttpGet("GetStudents")]
-        public async Task<IActionResult> GetStudents([FromQuery] int page = 1, [FromQuery] int pageSize = 10, [FromQuery] string classId = null)
+        public async Task<IActionResult> GetStudents([FromQuery] int page = 1, [FromQuery] int pageSize = 10, [FromQuery] Guid? classId = null)
         {
             try
             {
@@ -135,17 +137,19 @@ namespace BTL.Controllers
 
                 var query = _dbContext.students.Where(student => student.IsDeleted == 0);
 
-                if (!string.IsNullOrEmpty(classId))
+                if (classId.HasValue)
                 {
-                    query = query.Where(student => student.ClassId == classId);
+                    query = query.Where(student => student.ClassId == classId.Value);
                 }
 
-                query = query.OrderBy(student => student.LastName);
-
                 var studentList = query
-                    .Skip(skip)
-                    .Take(pageSize)
-                    .ToArray();
+                .Skip(skip)
+                .Take(pageSize)
+                .ToList();
+               
+                studentList = studentList
+                    .OrderBy(student => student.LastName, StringComparer.InvariantCultureIgnoreCase)
+                    .ToList();
 
                 var totalStudents = query.Count();
 
@@ -171,24 +175,17 @@ namespace BTL.Controllers
 
 
         [HttpGet("GetStudent/{id}")]
-        public async Task<IActionResult> GetStudent(string id)
+        public async Task<IActionResult> GetStudent(Guid id)
         {
             try
             {
-                if (!ObjectId.TryParse(id, out var objectId))
-                {
-                    return BadRequest(new
-                    {
-                        code = 0,
-                        message = "Mã học sinh không đúng định dạng"
-                    });
-                }
-
-                var student = _dbContext.students
-                    .FirstOrDefault(s => s.Id == objectId && s.IsDeleted == 0);
+                
+                var student = await _dbContext.students
+                    .FirstOrDefaultAsync(s => s.StudentId == id && s.IsDeleted == 0);
 
                 if (student == null)
                 {
+
                     return NotFound(new
                     {
                         code = 0,
@@ -214,19 +211,11 @@ namespace BTL.Controllers
         }
 
         [HttpDelete("DeleteStudent/{id}")]
-        public async Task<IActionResult> DeleteStudent(string id)
+        public async Task<IActionResult> DeleteStudent(Guid id)
         {
-            if (!ObjectId.TryParse(id, out var objectId))
-            {
-                return BadRequest(new
-                {
-                    code = 0,
-                    message = "Mã học sinh không đúng định dạng"
-                });
-            }
-
+         
             var student = _dbContext.students
-                    .FirstOrDefault(s => s.Id == objectId && s.IsDeleted == 0);
+                    .FirstOrDefault(s => s.StudentId == id && s.IsDeleted == 0);
 
             if (student == null)
             {
@@ -253,7 +242,7 @@ namespace BTL.Controllers
         }
 
         [HttpPut("{id}")]
-        public async Task<IActionResult> UpdateStudent(string id, [FromForm] AddStudentRequest request, IFormFile? avatar)
+        public async Task<IActionResult> UpdateStudent(Guid id, [FromForm] AddStudentRequest request, IFormFile? avatar)
         {
             if (string.IsNullOrWhiteSpace(request.FirstName) || !Regex.IsMatch(request.FirstName, @"^[a-zA-ZÀ-ỹà-ỹ\s\d]+$"))
             {
@@ -297,29 +286,15 @@ namespace BTL.Controllers
                 }
             }
 
-            if (!ObjectId.TryParse(request.ClassId, out var classObjectId))
-            {
-                return BadRequest(new { code = 0, message = "Mã lớp học không đúng định dạng" });
-            }
-
-            if (!ObjectId.TryParse(id, out var objectId))
-            {
-                return BadRequest(new
-                {
-                    code = 0,
-                    message = "Mã học sinh không đúng định dạng"
-                });
-            }
-
             try
             {
-                var student = _dbContext.students.FirstOrDefault(s => s.Id == objectId && s.IsDeleted == 0);
+                var student = _dbContext.students.FirstOrDefault(s => s.StudentId == id && s.IsDeleted == 0);
                 if (student == null)
                 {
                     return NotFound(new { code = 0, message = "Không tìm thấy thông tin học sinh" });
                 }
 
-                var existingClass = _dbContext.classes.FirstOrDefault(c => c.Id == classObjectId);
+                var existingClass = _dbContext.classes.FirstOrDefault(c => c.CLassId == request.ClassId);
                 if (existingClass == null)
                 {
                     return BadRequest(new { code = 0, message = "Thông tin lớp học không chính xác" });
@@ -351,24 +326,23 @@ namespace BTL.Controllers
                     }
                 }
 
-                var gender = request.Gender ?? 1;
-
                 student.FirstName = request.FirstName;
                 student.LastName = request.LastName;
                 student.ClassId = request.ClassId;
-                student.Gender = gender;
-                student.DayOfBirth = request.DayOfBirth;
+                student.Gender = request.Gender ?? 1;
+                student.DayOfBirth = request.DayOfBirth ?? "";
                 student.Avatar = avatarPath;
 
                 await _dbContext.students.Update(student);
 
-                return Ok(new { code = 1, message = "Cập nhật thông tin học sinh thành công", data = student });
+                var dataStudent = _dbContext.students.Where(data => data.StudentId == id).FirstOrDefault();
+
+                return Ok(new { code = 1, message = "Cập nhật thông tin học sinh thành công", data = dataStudent });
             }
             catch (Exception ex)
             {
                 return StatusCode(500, new { code = 0, message = "Cập nhật thông tin học sinh thất bại", error = ex.Message });
             }
         }
-        
     }
 }

@@ -2,6 +2,8 @@
 using BTL.Request;
 using Microsoft.AspNetCore.Identity.Data;
 using Microsoft.AspNetCore.Mvc;
+using MongoDB.Driver;
+using MongoDB.Driver.Linq;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
@@ -25,9 +27,9 @@ namespace BTL.Controllers
         [HttpPost]
         public async Task<IActionResult> Login([FromBody] LoginUserRequest request)
         {
-            var user = _dbContext.users
+            var user = await _dbContext.users
                 .Where(u => u.Username == request.Username && u.Password == request.Password)
-                .FirstOrDefault();
+                .FirstOrDefaultAsync();
 
             if (user == null)
             {

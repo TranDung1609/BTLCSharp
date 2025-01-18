@@ -5,6 +5,9 @@ namespace BTL.Models
 {
     public class Class : AbstractEntityObjectIdTracking
     {
+        [BsonElement("classId")]
+        public Guid CLassId { get; set; }
+
         [BsonElement("fullname")]
         public string Fullname { get; set; }
 
