@@ -4,6 +4,8 @@ using BTL.Request;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 using MongoDB.Bson;
+using System.Globalization;
+using System.Text.RegularExpressions;
 
 namespace BTL.Controllers
 {
@@ -22,64 +24,105 @@ namespace BTL.Controllers
         [HttpPost]
         public async Task<IActionResult> AddStudent([FromForm] AddStudentRequest request, IFormFile? avatar)
         {
-            if (request == null || string.IsNullOrWhiteSpace(request.FirstName) ||
-                string.IsNullOrWhiteSpace(request.LastName) ||
-                string.IsNullOrWhiteSpace(request.ClassId))
+            if (string.IsNullOrWhiteSpace(request.FirstName) || !Regex.IsMatch(request.FirstName, @"^[a-zA-ZÀ-ỹà-ỹ\s\d]+$"))
             {
-                return BadRequest(new { code = 0, message = "Invalid student data" });
+                return BadRequest(new { code = 0, message = "Họ tên đệm học sinh không đúng định dạng" });
             }
 
-            // Kiểm tra ClassId có hợp lệ không
+            if (string.IsNullOrWhiteSpace(request.LastName) || !Regex.IsMatch(request.LastName, @"^[a-zA-ZÀ-ỹà-ỹ\d]+$"))
+            {
+                return BadRequest(new { code = 0, message = "Tên học sinh không đúng định dạng" });
+            }
+
+            if (request.Gender.HasValue && request.Gender != 1 && request.Gender != 2)
+            {
+                return BadRequest(new { code = 0, message = "Giá trị giới tính không hợp lệ" });
+            }
+
+
+            if (!string.IsNullOrWhiteSpace(request.DayOfBirth))
+            {
+
+                if (!Regex.IsMatch(request.DayOfBirth, @"^\d{2}/\d{2}/\d{4}$"))
+                {
+                    return BadRequest(new { code = 0, message = "Ngày sinh không đúng định dạng dd/MM/yyyy" });
+                }
+
+                if (!DateTime.TryParseExact(request.DayOfBirth, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                {
+                    return BadRequest(new { code = 0, message = "Ngày sinh không đúng định dạng dd/MM/yyyy" });
+                }
+            }
+
+
+            if (avatar != null)
+            {
+                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png" };
+                var fileExtension = Path.GetExtension(avatar.FileName).ToLowerInvariant();
+
+                if (!allowedExtensions.Contains(fileExtension))
+                {
+                    return BadRequest(new { code = 0, message = "Ảnh chỉ chấp nhập file .jpg, .jpeg, .png" });
+                }
+            }
+
             if (!ObjectId.TryParse(request.ClassId, out var objectId))
             {
-                return BadRequest(new { code = 0, message = "Invalid ClassId format" });
+                return BadRequest(new { code = 0, message = "Mã lớp học không đúng định dạng" });
             }
 
             try
             {
-                // Kiểm tra ClassId có tồn tại trong cơ sở dữ liệu hay không
                 var existingClass = _dbContext.classes.Where(c => c.Id == objectId).FirstOrDefault();
                 if (existingClass == null)
                 {
                     return BadRequest(new { code = 0, message = "Thông tin lớp học không chính xác" });
                 }
 
-                // Xử lý file avatar
                 string avatarPath = null;
                 if (avatar != null)
                 {
                     string uploadDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
+
                     if (!Directory.Exists(uploadDirectory))
                     {
                         Directory.CreateDirectory(uploadDirectory);
                     }
 
-                    avatarPath = Path.Combine(uploadDirectory, avatar.FileName);
-                    using (var stream = new FileStream(avatarPath, FileMode.Create))
+                    string fileExtension = Path.GetExtension(avatar.FileName);
+
+                    string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(avatar.FileName);
+
+                    string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+
+                    string newFileName = $"{fileNameWithoutExtension}_{timestamp}{fileExtension}";
+
+                    avatarPath = Path.Combine("Uploads/", newFileName);
+
+                    using (var stream = new FileStream(Path.Combine(Directory.GetCurrentDirectory(), avatarPath), FileMode.Create))
                     {
                         await avatar.CopyToAsync(stream);
                     }
                 }
+                var gender = request.Gender ?? 1;
 
-                // Tạo đối tượng Student từ request
                 var student = new Student
                 {
                     FirstName = request.FirstName,
                     LastName = request.LastName,
                     ClassId = request.ClassId,
-                    Gender = request.Gender,
+                    Gender = gender,
                     DayOfBirth = request.DayOfBirth,
                     Avatar = avatarPath
                 };
 
-                // Lưu vào database
                 await _dbContext.students.Insert(student);
 
-                return Ok(new { code = 1, message = "Student added successfully", data = student });
+                return Ok(new { code = 1, message = "Tạo học sinh thành công", data = student });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { code = 0, message = "An error occurred", error = ex.Message });
+                return StatusCode(500, new { code = 0, message = "Tạo học sinh thất bại", error = ex.Message });
             }
         }
 
@@ -90,10 +133,8 @@ namespace BTL.Controllers
             {
                 var skip = (page - 1) * pageSize;
 
-                // Xây dựng truy vấn tìm học sinh
                 var query = _dbContext.students.Where(student => student.IsDeleted == 0);
 
-                // Nếu có classId thì thêm điều kiện vào query
                 if (!string.IsNullOrEmpty(classId))
                 {
                     query = query.Where(student => student.ClassId == classId);
@@ -101,13 +142,11 @@ namespace BTL.Controllers
 
                 query = query.OrderBy(student => student.LastName);
 
-                // Lấy danh sách học sinh với phân trang
                 var studentList = query
                     .Skip(skip)
                     .Take(pageSize)
                     .ToArray();
 
-                // Đếm tổng số học sinh thỏa mãn điều kiện
                 var totalStudents = query.Count();
 
                 return Ok(new
@@ -124,7 +163,7 @@ namespace BTL.Controllers
                 return StatusCode(500, new
                 {
                     code = 0,
-                    message = "An error occurred",
+                    message = "Có lỗi sảy ra",
                     error = ex.Message
                 });
             }
@@ -136,35 +175,30 @@ namespace BTL.Controllers
         {
             try
             {
-                // Chuyển chuỗi id thành ObjectId
                 if (!ObjectId.TryParse(id, out var objectId))
                 {
                     return BadRequest(new
                     {
                         code = 0,
-                        message = "Invalid student id"
+                        message = "Mã học sinh không đúng định dạng"
                     });
                 }
 
-                // Tìm học sinh theo Id
                 var student = _dbContext.students
                     .FirstOrDefault(s => s.Id == objectId && s.IsDeleted == 0);
 
-                // Kiểm tra nếu không tìm thấy học sinh
                 if (student == null)
                 {
                     return NotFound(new
                     {
                         code = 0,
-                        message = "Student not found"
+                        message = "Không tìm thấy thông tin học sinh"
                     });
                 }
 
-                // Trả về thông tin học sinh
                 return Ok(new
                 {
                     code = 1,
-                    message = "Student retrieved successfully",
                     data = student
                 });
             }
@@ -173,7 +207,7 @@ namespace BTL.Controllers
                 return StatusCode(500, new
                 {
                     code = 0,
-                    message = "An error occurred",
+                    message = "Có lỗi xảy ra",
                     error = ex.Message
                 });
             }
@@ -187,7 +221,7 @@ namespace BTL.Controllers
                 return BadRequest(new
                 {
                     code = 0,
-                    message = "Invalid student id"
+                    message = "Mã học sinh không đúng định dạng"
                 });
             }
 
@@ -199,7 +233,7 @@ namespace BTL.Controllers
                 return NotFound(new
                 {
                     code = 0,
-                    message = "Student not found"
+                    message = "Không tìm thấy thôn tin học sinh"
                 });
             }
 
@@ -208,31 +242,64 @@ namespace BTL.Controllers
            
                 student.IsDeleted = 1;
 
-                // Lưu thay đổi
                 await _dbContext.students.Update(student);
 
-                return Ok(new { code = 1, message = "Student deleted successfully" });
+                return Ok(new { code = 1, message = "Xóa học sinh thành công" });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { code = 0, message = "An error occurred", error = ex.Message });
+                return StatusCode(500, new { code = 0, message = "Xóa học sinh thất bại", error = ex.Message });
             }
         }
 
         [HttpPut("{id}")]
         public async Task<IActionResult> UpdateStudent(string id, [FromForm] AddStudentRequest request, IFormFile? avatar)
         {
-            if (request == null || string.IsNullOrWhiteSpace(request.FirstName) ||
-                string.IsNullOrWhiteSpace(request.LastName) ||
-                string.IsNullOrWhiteSpace(request.ClassId))
+            if (string.IsNullOrWhiteSpace(request.FirstName) || !Regex.IsMatch(request.FirstName, @"^[a-zA-ZÀ-ỹà-ỹ\s\d]+$"))
             {
-                return BadRequest(new { code = 0, message = "Invalid student data" });
+                return BadRequest(new { code = 0, message = "Họ tên đệm học sinh không đúng định dạng" });
             }
 
-            // Kiểm tra định dạng ClassId
+            if (string.IsNullOrWhiteSpace(request.LastName) || !Regex.IsMatch(request.LastName, @"^[a-zA-ZÀ-ỹà-ỹ\d]+$"))
+            {
+                return BadRequest(new { code = 0, message = "Tên học sinh không đúng định dạng" });
+            }
+
+            if (request.Gender.HasValue && request.Gender != 1 && request.Gender != 2)
+            {
+                return BadRequest(new { code = 0, message = "Giá trị giới tính không hợp lệ" });
+            }
+
+
+            if (!string.IsNullOrWhiteSpace(request.DayOfBirth))
+            {
+
+                if (!Regex.IsMatch(request.DayOfBirth, @"^\d{2}/\d{2}/\d{4}$"))
+                {
+                    return BadRequest(new { code = 0, message = "Ngày sinh không đúng định dạng dd/MM/yyyy" });
+                }
+
+                if (!DateTime.TryParseExact(request.DayOfBirth, "dd/MM/yyyy", CultureInfo.InvariantCulture, DateTimeStyles.None, out _))
+                {
+                    return BadRequest(new { code = 0, message = "Ngày sinh không đúng định dạng dd/MM/yyyy" });
+                }
+            }
+
+
+            if (avatar != null)
+            {
+                var allowedExtensions = new[] { ".jpg", ".jpeg", ".png" };
+                var fileExtension = Path.GetExtension(avatar.FileName).ToLowerInvariant();
+
+                if (!allowedExtensions.Contains(fileExtension))
+                {
+                    return BadRequest(new { code = 0, message = "Ảnh chỉ chấp nhập file .jpg, .jpeg, .png" });
+                }
+            }
+
             if (!ObjectId.TryParse(request.ClassId, out var classObjectId))
             {
-                return BadRequest(new { code = 0, message = "Invalid ClassId format" });
+                return BadRequest(new { code = 0, message = "Mã lớp học không đúng định dạng" });
             }
 
             if (!ObjectId.TryParse(id, out var objectId))
@@ -240,57 +307,66 @@ namespace BTL.Controllers
                 return BadRequest(new
                 {
                     code = 0,
-                    message = "Invalid student id"
+                    message = "Mã học sinh không đúng định dạng"
                 });
             }
 
             try
             {
-                // Tìm kiếm học sinh dựa vào id
                 var student = _dbContext.students.FirstOrDefault(s => s.Id == objectId && s.IsDeleted == 0);
                 if (student == null)
                 {
-                    return NotFound(new { code = 0, message = "Student not found" });
+                    return NotFound(new { code = 0, message = "Không tìm thấy thông tin học sinh" });
                 }
 
-                // Kiểm tra ClassId có tồn tại trong cơ sở dữ liệu hay không
                 var existingClass = _dbContext.classes.FirstOrDefault(c => c.Id == classObjectId);
                 if (existingClass == null)
                 {
                     return BadRequest(new { code = 0, message = "Thông tin lớp học không chính xác" });
                 }
 
-               
                 string avatarPath = student.Avatar;
                 if (avatar != null)
                 {
                     string uploadDirectory = Path.Combine(Directory.GetCurrentDirectory(), "Uploads");
+
                     if (!Directory.Exists(uploadDirectory))
                     {
                         Directory.CreateDirectory(uploadDirectory);
                     }
 
-                    avatarPath = Path.Combine(uploadDirectory, avatar.FileName);
-                    using (var stream = new FileStream(avatarPath, FileMode.Create))
+                    string fileExtension = Path.GetExtension(avatar.FileName);
+
+                    string fileNameWithoutExtension = Path.GetFileNameWithoutExtension(avatar.FileName);
+
+                    string timestamp = DateTime.Now.ToString("yyyyMMddHHmmss");
+
+                    string newFileName = $"{fileNameWithoutExtension}_{timestamp}{fileExtension}";
+
+                    avatarPath = Path.Combine("Uploads/", newFileName);
+
+                    using (var stream = new FileStream(Path.Combine(Directory.GetCurrentDirectory(), avatarPath), FileMode.Create))
                     {
                         await avatar.CopyToAsync(stream);
                     }
                 }
 
+                var gender = request.Gender ?? 1;
+
                 student.FirstName = request.FirstName;
                 student.LastName = request.LastName;
                 student.ClassId = request.ClassId;
-                student.Gender = request.Gender;
+                student.Gender = gender;
                 student.DayOfBirth = request.DayOfBirth;
                 student.Avatar = avatarPath;
 
                 await _dbContext.students.Update(student);
 
-                return Ok(new { code = 1, message = "Student updated successfully", data = student });
+                return Ok(new { code = 1, message = "Cập nhật thông tin học sinh thành công", data = student });
             }
             catch (Exception ex)
             {
-                return StatusCode(500, new { code = 0, message = "An error occurred", error = ex.Message });
+                return StatusCode(500, new { code = 0, message = "Cập nhật thông tin học sinh thất bại", error = ex.Message });
             }
         }
         

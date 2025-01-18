@@ -46,7 +46,7 @@ namespace BTL.Controllers
                 return StatusCode(500, new
                 {
                     code = 0,
-                    message = "An error occurred",
+                    message = "Có lỗi xảy ra",
                     error = ex.Message
                 });
             }

@@ -31,10 +31,9 @@ namespace BTL.Controllers
 
             if (user == null)
             {
-                return Unauthorized(new { code = 0, message = "Invalid credentials" });
+                return Unauthorized(new { code = 0, message = "Thông tin đăng nhập không chính xác" });
             }
 
-            // Tạo JWT token (giống như trước)
             var token = GenerateJwtToken(user);
 
             return Ok(new { code = 1, data = token });

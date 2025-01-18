@@ -15,7 +15,7 @@ namespace BTL.Models
         public string ClassId { get; set; }
 
         [BsonElement("gender")]
-        public int? Gender { get; set; }
+        public short Gender { get; set; } = 1;
 
         [BsonElement("dayOfBirth")]
         public string DayOfBirth { get; set; }
